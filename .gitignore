@@ -1,1 +1,6 @@
 .venv/
+__pycache__/
+.settings.json
+settings.json
+stroi-dok-80d482d9c5dd.json
+credentials.json

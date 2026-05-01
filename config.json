@@ -1,0 +1,7 @@
+{
+    "google_sheets": {
+        "credentials_file": "credentials.json",
+        "sheet_name": "\u0421\u0442\u0440\u043e\u0439\u0414\u043e\u043a_\u0414\u0430\u043d\u043d\u044b\u0435",
+        "enabled": true
+    }
+}
