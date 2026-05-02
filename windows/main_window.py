@@ -10,6 +10,10 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QMessageBox
 )
+
+from pptx import Presentation
+from pptx.util import Inches, Pt
+
 from utils import format_input, validate
 from .err_window import ErrWindow
 from .spread.spreadsheet_manager import GoogleSheetsManager
@@ -19,12 +23,14 @@ import pandas as pd
 import os
 
 WIDTH = 1000
-HEIGHT = 400  # Увеличил высоту для новых кнопок
+HEIGHT = 400
 MAIN_WINDOW_NAME = "СтройДок"
 
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
+
+        self.is_saved = False
 
         self.a = ""
         self.b = ""
@@ -72,7 +78,9 @@ class MainWindow(QWidget):
 
         self.save_button = QPushButton("Сохранить", self)
         self.export_button = QPushButton("Загрузить отчет (.xlsx)", self)
-        self.google_sync_button = QPushButton("Синхронизировать с Google Sheets", self)
+        self.google_sync_button = QPushButton("Синхронизировать с Google Таблицу", self)
+        self.export_to_presentation = QPushButton("Экспортировать в Google Презентацию", self)
+
         #self.load_history_button = QPushButton("Загрузить историю из Google Sheets", self)
 
         main_layout = QVBoxLayout()
@@ -90,7 +98,8 @@ class MainWindow(QWidget):
 
         main_layout.addWidget(self.save_button)
         main_layout.addWidget(self.export_button)
-        
+        main_layout.addWidget(self.export_to_presentation)
+
         # Добавляем кнопки Google Sheets только если менеджер инициализирован
         if self.google_manager:
             main_layout.addWidget(self.google_sync_button)
@@ -100,6 +109,7 @@ class MainWindow(QWidget):
 
         self.save_button.clicked.connect(self.save_data)
         self.export_button.clicked.connect(self.export_into_xlsx)
+        self.export_to_presentation.clicked.connect(self.export_to_google_presentation)
         
         if self.google_manager:
             self.google_sync_button.clicked.connect(self.sync_to_google_sheets)
@@ -117,7 +127,94 @@ class MainWindow(QWidget):
         formatted = format_input(float(text))
 
         line_edit.setText(formatted)
-    
+
+
+    def export_to_google_presentation(self):
+        """Генерирует презентацию на основе текущих данных и сохраняет ее в выбранное место"""
+
+        if not self.is_saved:
+            QMessageBox.warning(
+                self,
+                "Предупреждение",
+                "Данные не были сохранены (кнопка 'Сохранить').\n"
+            )
+            return
+
+        prs: Presentation = Presentation()
+
+        # --- СЛАЙД 1: Титульный ---
+        first_page_layout = prs.slide_layouts[0]
+        first_slide = prs.slides.add_slide(first_page_layout)
+        first_slide_title = first_slide.shapes.title
+        first_slide_title.text = "Отчет о маржинальности проекта"
+
+        try:
+            _a = float(self.input_a.text().replace(" ", ""))
+            _b = float(self.input_b.text().replace(" ", ""))
+            _c = float(self.input_c.text().replace(" ", ""))
+            _margin = _a * _c - _b * _c
+        except ValueError:
+            QMessageBox.warning(self, "Ошибка", "Пожалуйста, введите корректные числовые значения")
+            return
+
+        # --- СЛАЙД 2: Основные показатели (Список) ---
+        main_page_layout = prs.slide_layouts[1] 
+        main_slide = prs.slides.add_slide(main_page_layout)
+
+        # Заголовок второго слайда
+        main_slide_title = main_slide.shapes.title
+        main_slide_title.text = "Основные показатели"
+
+        # Обычно placeholder[1] на макете slide_layouts[1] — это блок для текста/списка
+        body_shape = main_slide.placeholders[1]
+        tf = body_shape.text_frame
+        tf.text = f"Цена за м² (руб.): {_a}"
+
+        # Добавляем новые пункты списка (параграфы)
+        p = tf.add_paragraph()
+        p.text = f"Себестоимость за м² (руб.): {_b}"
+        p.level = 0 # Уровень вложенности списка
+
+        p = tf.add_paragraph()
+        p.text = f"Количество (м²): {_c}"
+        p.level = 0
+
+        # Добавляем пустую строку для отступа перед маржой
+        p = tf.add_paragraph()
+        p.text = ""
+
+        # Добавляем итоговый показатель маржи
+        p = tf.add_paragraph()
+        p.text = f"Итоговая маржа: {_margin:.2f}" # .2f округлит до 2 знаков
+        p.font.bold = True # Делаем жирным для акцента
+
+        # --- СЛАЙД 3: Финальный ---
+        # Можно использовать пустой макет (layout 6) или центрированный (layout 1 или 2)
+        final_page_layout = prs.slide_layouts[1] 
+        final_slide = prs.slides.add_slide(final_page_layout)
+
+        # Убираем заголовок или используем его как центральный текст
+        final_slide_title = final_slide.shapes.title
+        final_slide_title.text = "Спасибо за внимание!"
+
+        # Очищаем второй текстовый блок, если он не нужен на этом слайде
+        if len(final_slide.placeholders) > 1:
+            final_slide.placeholders[1].text = ""
+
+        # --- СОХРАНЕНИЕ ---
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Сохранить файл", "presentation.pptx", "PowerPoint Files (*.pptx)"
+        )
+
+        if not file_path:
+            return
+
+        if not file_path.endswith(".pptx"):
+            file_path += ".pptx"
+
+        prs.save(file_path)
+
+
     def sync_to_google_sheets(self):
         """Синхронизирует текущие данные с Google Sheets"""
         if not self.google_manager:
@@ -190,10 +287,18 @@ class MainWindow(QWidget):
             ErrWindow(f"Ошибка загрузки из Google Sheets: {str(e)}").exec()
 
     def export_into_xlsx(self):
-        if not all([self.input_a.text(), self.input_b.text(), self.input_c.text()]):
-            ErrWindow("Нет данных! Сначала заполните поля.").exec()
-            return
+        # if not all([self.input_a.text(), self.input_b.text(), self.input_c.text()]):
+        #     ErrWindow("Нет данных! Сначала заполните поля.").exec()
+        #     return
 
+        if not self.is_saved:
+            QMessageBox.warning(
+                self,
+                "Предупреждение",
+                "Данные не были сохранены (кнопка 'Сохранить').\n"
+            )
+            return
+        
         if not all([self.a, self.b, self.c]):
             reply = QMessageBox.warning(
                 self,
@@ -256,11 +361,19 @@ class MainWindow(QWidget):
             self._m = f"{(self._ma):_}".replace("_", " ")
 
             self.margin_label.setText(self._m + " " + "Rub")
+
+            self.is_saved = True
             
             # Автоматическая синхронизация при сохранении (опционально)
             if self.google_manager and hasattr(self, '_auto_sync') and self._auto_sync:
                 self.sync_to_google_sheets()
 
         except (TypeError, ValueError):
-            err_window = ErrWindow("Ошибка Ввода")
-            err_window.exec()
+            QMessageBox.warning(
+                self,
+                "Предупреждение",
+                "Введите данные и повторите попытку.\n"
+            )
+            return
+            #err_window = ErrWindow("Ошибка Ввода")
+            #err_window.exec()
